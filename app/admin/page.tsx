@@ -334,7 +334,8 @@ export default function AdminPage() {
     } else if (res.status === 401) {
       setAuthError("Wrong password.");
     } else {
-      setAuthError("Could not reach the backend. Check ENIGMA_API_URL and try again.");
+      const json = await res.json().catch(() => ({}));
+      setAuthError(json.message || "Could not reach the backend. Check ENIGMA_API_URL and try again.");
     }
   };
 

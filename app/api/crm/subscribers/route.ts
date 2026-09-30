@@ -20,8 +20,23 @@ export async function GET(req: NextRequest) {
 
   const res = await fetch(
     `${ENIGMA_API_URL}/api/crm/clients/${config.clientSlug}/subscribers`,
-    { headers: { "x-admin-password": ADMIN_PASSWORD } }
+    { headers: { "x-admin-password": ADMIN_PASSWORD }, cache: "no-store" }
   );
+
+  // The typed password matched this site's ADMIN_PASSWORD, but the CRM
+  // backend doesn't accept that value (it takes CRM_ADMIN_PASSWORD or this
+  // client's own adminPassword). Report it as a config problem, not a wrong
+  // password, so the login screen doesn't mislead.
+  if (res.status === 401) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message:
+          "Password is correct, but the CRM backend doesn't accept this site's ADMIN_PASSWORD. Set it as this client's password on the backend.",
+      },
+      { status: 502 }
+    );
+  }
 
   const data = await res.json();
   return NextResponse.json(data, { status: res.status });
