@@ -20,8 +20,9 @@ const SOURCE_LABELS: Record<string, string> = {
   import: "Imported",
 };
 
-const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || "pw";
-const SESSION_KEY = "customizedstone_admin_authed";
+// The real password lives only in the server-side ADMIN_PASSWORD env var —
+// this page sends what the user typed to /api/crm/* and the server checks it.
+const SESSION_KEY = "customizedstone_admin_password";
 
 function downloadBlob(content: BlobPart, filename: string, type: string) {
   const blob = new Blob([content], { type });
@@ -73,19 +74,32 @@ export default function AdminPage() {
   const [subscriberSourceFilter, setSubscriberSourceFilter] = useState("all");
 
   useEffect(() => {
-    if (sessionStorage.getItem(SESSION_KEY) === "1") {
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    if (saved) {
+      setPassword(saved);
       setAuthed(true);
     }
   }, []);
+
+  const logOut = () => {
+    sessionStorage.removeItem(SESSION_KEY);
+    setPassword("");
+    setAuthed(false);
+  };
 
   const loadSubscribers = async () => {
     setLoading(true);
     setLoadError("");
     try {
-      const res = await fetch(
-        `${config.crm.apiUrl}/api/crm/clients/${config.clientSlug}/subscribers`,
-        { headers: { "x-admin-password": ADMIN_PASSWORD } }
-      );
+      const res = await fetch("/api/crm/subscribers", {
+        headers: { "x-admin-password": password },
+        cache: "no-store",
+      });
+      // Saved password no longer matches ADMIN_PASSWORD — back to login.
+      if (res.status === 401) {
+        logOut();
+        return;
+      }
       if (!res.ok) throw new Error("Failed to load subscribers");
       const json = await res.json();
       setSubscribers(json.subscribers || []);
@@ -101,14 +115,24 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
 
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === ADMIN_PASSWORD) {
-      sessionStorage.setItem(SESSION_KEY, "1");
-      setAuthed(true);
-      setAuthError("");
-    } else {
-      setAuthError("Wrong password.");
+    try {
+      const res = await fetch("/api/crm/subscribers", {
+        headers: { "x-admin-password": password },
+        cache: "no-store",
+      });
+      if (res.ok) {
+        sessionStorage.setItem(SESSION_KEY, password);
+        setAuthed(true);
+        setAuthError("");
+      } else if (res.status === 401) {
+        setAuthError("Wrong password.");
+      } else {
+        setAuthError("Could not reach the backend. Check ENIGMA_API_URL and try again.");
+      }
+    } catch {
+      setAuthError("Could not reach the backend. Check ENIGMA_API_URL and try again.");
     }
   };
 
@@ -143,10 +167,9 @@ export default function AdminPage() {
     if (!confirmDelete) return;
 
     try {
-      const res = await fetch(`${config.crm.apiUrl}/api/crm/subscribers/${subscriber._id}`, {
+      const res = await fetch(`/api/crm/subscribers/${subscriber._id}`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json", "x-admin-password": ADMIN_PASSWORD },
-        body: JSON.stringify({ clientSlug: config.clientSlug }),
+        headers: { "x-admin-password": password },
       });
       if (!res.ok) throw new Error("Delete failed");
       setSubscribers((prev) => prev.filter((s) => s._id !== subscriber._id));
@@ -210,10 +233,9 @@ export default function AdminPage() {
       // drop the rows the backend actually deleted.
       const results = await Promise.all(
         ids.map((id) =>
-          fetch(`${config.crm.apiUrl}/api/crm/subscribers/${id}`, {
+          fetch(`/api/crm/subscribers/${id}`, {
             method: "DELETE",
-            headers: { "Content-Type": "application/json", "x-admin-password": ADMIN_PASSWORD },
-            body: JSON.stringify({ clientSlug: config.clientSlug }),
+            headers: { "x-admin-password": password },
           })
             .then((res) => ({ id, ok: res.ok }))
             .catch(() => ({ id, ok: false }))
@@ -262,12 +284,12 @@ export default function AdminPage() {
       setImportStatus(`Importing ${parsed.length} rows...`);
 
       const res = await fetch(
-        `${config.crm.apiUrl}/api/crm/subscribers/import`,
+        "/api/crm/import",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-admin-password": ADMIN_PASSWORD,
+            "x-admin-password": password,
           },
           body: JSON.stringify({
             clientSlug: config.clientSlug,
@@ -328,10 +350,7 @@ export default function AdminPage() {
             NEWSLETTER & CONTACT SUBSCRIBERS
           </h1>
           <button
-            onClick={() => {
-              sessionStorage.removeItem(SESSION_KEY);
-              setAuthed(false);
-            }}
+            onClick={logOut}
             className="btn btn-ghost btn-sm"
           >
             Log Out

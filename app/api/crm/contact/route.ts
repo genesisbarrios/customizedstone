@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ENIGMA_API_URL } from "@/libs/crmProxy";
 import { isFormTokenEnabled, isValidFormToken } from "@/libs/formToken";
 
-// Server-only proxy to enigma-node-server. ENIGMA_API_URL has no
-// NEXT_PUBLIC_ prefix on purpose — this file only ever runs server-side, so
-// the backend's real URL is never shipped to the browser. ContactForm and
-// NewsletterForm call this same-origin route instead of the backend directly.
-// Falls back to the NEXT_PUBLIC_ URL this site already has configured.
-const ENIGMA_API_URL =
-  process.env.ENIGMA_API_URL || process.env.NEXT_PUBLIC_ENIGMA_API_URL || "http://localhost:5000";
+// Same-origin proxy to enigma-node-server that ContactForm and NewsletterForm
+// POST to. The backend URL (ENIGMA_API_URL, see libs/crmProxy.ts) stays
+// server-side and is never shipped to the browser.
 
 // Cloudflare Turnstile — only enforced once TURNSTILE_SECRET_KEY is set (with
 // NEXT_PUBLIC_TURNSTILE_SITE_KEY for the widget), so the forms keep working
