@@ -42,6 +42,7 @@ export default function Footer() {
                 <Link href="/gallery" className="link link-hover">Gallery</Link>
                 <Link href="/about" className="link link-hover">About</Link>
                 <Link href="/contact" className="link link-hover">Contact</Link>
+                <Link href="/service-areas" className="link link-hover">Service Areas</Link>
               </div>
             </div>
 
@@ -51,6 +52,8 @@ export default function Footer() {
               </div>
               <div className="flex flex-col gap-2 text-sm text-secondary-content/80">
                 <span>Miami-Dade, Broward, and Monroe County</span>
+                <span>Granite fabricators &amp; granite repairs</span>
+                <Link href="/service-areas" className="link link-hover">All service areas</Link>
               </div>
             </div>
 

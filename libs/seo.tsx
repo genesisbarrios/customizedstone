@@ -11,10 +11,14 @@ const baseKeywords = [
   "marble countertops",
   "quartz countertops",
   "onyx countertops",
+  "granite fabricators",
+  "granite repairs",
   config.cityState,
   ...config.serviceAreas,
   ...config.serviceAreas.map((area) => `granite countertops ${area}`),
   ...config.serviceAreas.map((area) => `stone fabrication ${area}`),
+  ...config.serviceAreas.map((area) => `granite fabricators ${area}`),
+  ...config.serviceAreas.map((area) => `granite repairs ${area}`),
 ];
 
 // Prefills SEO tags with sensible defaults from config.ts. Override per-page
