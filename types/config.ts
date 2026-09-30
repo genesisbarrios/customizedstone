@@ -36,6 +36,8 @@ export interface ConfigProps {
   googleBusinessUrl?: string;
   yelpUrl?: string;
   contactEmail: string;
+  // Full public URL of the logo shown in campaign email signatures.
+  emailLogoUrl?: string;
   colors: {
     theme: Theme;
     main: string;

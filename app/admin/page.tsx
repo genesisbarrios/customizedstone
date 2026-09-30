@@ -184,6 +184,13 @@ const SOURCE_LABELS: Record<string, string> = {
   import: "Imported",
 };
 
+// Automatic signature on every campaign email: the business name with the
+// logo underneath (config.emailLogoUrl — a full public URL, since email
+// clients can't load relative paths).
+const EMAIL_SIGNATURE_LOGO = config.emailLogoUrl
+  ? `<img src="${config.emailLogoUrl}" alt="${config.appName}" width="160" style="display:block;max-width:160px;height:auto;border:0;" />`
+  : "";
+
 function buildCampaignHtml(bodyText: string) {
   const bodyHtml = bodyText
     .split("\n")
@@ -191,13 +198,14 @@ function buildCampaignHtml(bodyText: string) {
     .join("\n");
 
   return `
-  <div style="background:#fdf3f6;padding:32px 16px;font-family:Helvetica,Arial,sans-serif;">
+  <div style="background:#F7F5F2;padding:32px 16px;font-family:Helvetica,Arial,sans-serif;">
     <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);">
       <div style="padding:32px;">
         ${bodyHtml}
       </div>
-      <div style="padding:20px 32px;background:#fdf3f6;text-align:center;">
-        <p style="margin:0;color:#999;font-size:12px;">${config.appName}</p>
+      <div style="padding:20px 32px;background:#F7F5F2;">
+        <p style="margin:0 0 10px;color:#333;font-size:14px;font-weight:bold;">${config.appName}</p>
+        ${EMAIL_SIGNATURE_LOGO}
       </div>
     </div>
   </div>`;

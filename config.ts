@@ -52,6 +52,9 @@ const config = {
   yelpUrl: "https://www.yelp.com/biz/customized-stone-miami",
   // Confirmed — client-provided email.
   contactEmail: "stone.customized@gmail.com",
+  // Logo under the business name in campaign email signatures (full URL —
+  // www, since the bare domain doesn't resolve).
+  emailLogoUrl: "https://www.customizedstone.net/images/CustomizedStoneTransparent.png",
 
   colors: {
     // See tailwind.config.js daisyui.themes for the "customizedstone" theme
