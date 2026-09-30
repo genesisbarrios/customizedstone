@@ -36,7 +36,7 @@ export default function ContactPage() {
               GET IN TOUCH
             </h2>
             <div className="flex flex-col gap-4 text-base-content/80">
-              <p>Serving {config.location}.</p>
+              <p>Serving Miami-Dade, Broward, and Monroe County.</p>
               <p>
                 For the fastest response, call or text{" "}
                 <a href={`tel:${config.phone.tel}`} className="link text-primary">

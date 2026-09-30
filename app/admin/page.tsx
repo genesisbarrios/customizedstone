@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import config from "@/config";
+import { InternalAnalyticsCards, WebsiteAnalytics } from "@/components/admin/AnalyticsPanels";
 
 interface Subscriber {
   _id: string;
@@ -14,15 +15,45 @@ interface Subscriber {
   createdAt: string;
 }
 
-const SOURCE_LABELS: Record<string, string> = {
-  contact_form: "Contact Form",
-  newsletter: "Newsletter",
-  import: "Imported",
-};
+interface CampaignRecipient {
+  subscriberId: string;
+  email: string;
+  name?: string;
+  resendId?: string;
+  error?: string;
+}
 
-// The real password lives only in the server-side ADMIN_PASSWORD env var —
-// this page sends what the user typed to /api/crm/* and the server checks it.
+interface Campaign {
+  _id: string;
+  templateKey: string;
+  subject: string;
+  html: string;
+  recipients: CampaignRecipient[];
+  recipientCount: number;
+  createdAt: string;
+}
+
+// No password constant here on purpose — the real password only lives
+// server-side (see app/api/crm/subscribers/route.ts). The browser only ever
+// knows whatever the admin just typed, submitted to the server to check.
 const SESSION_KEY = "customizedstone_admin_password";
+
+const PencilIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6.75l1.5 1.5" />
+  </svg>
+);
+
+const TrashIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+    />
+  </svg>
+);
 
 function downloadBlob(content: BlobPart, filename: string, type: string) {
   const blob = new Blob([content], { type });
@@ -56,6 +87,122 @@ function findField(row: Record<string, any>, candidates: string[]) {
   return "";
 }
 
+const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/;
+
+// Turns text pasted from a spreadsheet (or just a plain list of
+// name/email/phone) into the same row shape handleImportFile produces, so
+// both paths share one import call. Handles: a header row (Name, Email,
+// Phone, Message) with tab or comma columns, columns with no header, or one
+// bare email per line.
+function parsePastedContacts(text: string): Record<string, any>[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return [];
+
+  const delimiter = lines[0].includes("\t") ? "\t" : lines[0].includes(",") ? "," : null;
+  const looksLikeHeader =
+    !lines[0].includes("@") && /name|email|phone|message|notes/i.test(lines[0]);
+
+  let header: string[] | null = null;
+  let dataLines = lines;
+  if (delimiter && looksLikeHeader) {
+    header = lines[0].split(delimiter).map((h) => h.trim());
+    dataLines = lines.slice(1);
+  }
+
+  // Excel/Sheets wrap copied cells containing commas in quotes even when
+  // tab-delimited — strip stray leading/trailing quotes so they don't end
+  // up baked into the email/name/phone values.
+  const stripQuotes = (s: string) => s.trim().replace(/^"+|"+$/g, "");
+
+  const rows: Record<string, any>[] = [];
+
+  for (const line of dataLines) {
+    if (header && delimiter) {
+      const cells = line.split(delimiter).map(stripQuotes);
+      const row: Record<string, string> = {};
+      header.forEach((h, i) => (row[h] = cells[i] || ""));
+      rows.push(row);
+      continue;
+    }
+
+    const emailsOnLine = line.match(new RegExp(EMAIL_RE.source, "g")) || [];
+
+    // Multiple contacts pasted on one line — e.g. an email's To:/CC: field
+    // copied as "Jane Doe <jane@x.com>, John Smith <john@x.com>".
+    if (emailsOnLine.length > 1) {
+      line.split(/[,;]/).forEach((chunk) => {
+        const match = chunk
+          .trim()
+          .match(new RegExp(`^(.*?)[\\s<]*(${EMAIL_RE.source})>?$`));
+        if (match) rows.push({ name: stripQuotes(match[1]), email: match[2] });
+      });
+      continue;
+    }
+
+    if (delimiter) {
+      const cells = line.split(delimiter).map(stripQuotes);
+      const email = cells.find((c) => EMAIL_RE.test(c)) || "";
+      const rest = cells.filter((c) => c !== email);
+      rows.push({ name: rest[0] || "", email, phone: rest[1] || "" });
+      continue;
+    }
+
+    const match = line.match(new RegExp(`^(.*?)[\\s<]*(${EMAIL_RE.source})>?$`));
+    rows.push(match ? { name: stripQuotes(match[1]), email: match[2] } : { email: line });
+  }
+
+  return rows;
+}
+
+// Starting points for the campaign composer — admin can edit freely before
+// sending. "(name)" is mail-merged server-side with each recipient's first
+// name.
+const TEMPLATE_PRESETS: Record<string, { label: string; subject: string; body: string }> = {
+  promo: {
+    label: "Promo / Special",
+    subject: "A little something just for you 🎉",
+    body: "Hi (name),\n\nWe wanted to let you know about a special we're running — [DETAILS HERE].\n\nWe'd love to see you soon!",
+  },
+  events: {
+    label: "Upcoming Event",
+    subject: "Upcoming Event! 📅",
+    body: "Hi (name),\n\nWe wanted to let you know about an upcoming event — [EVENT NAME] on [DATE] at [LOCATION].\n\n[Add event details here.]\n\nWe'd love to see you there!",
+  },
+  custom: {
+    label: "Blank / Custom",
+    subject: "",
+    body: "Hi (name),\n\n",
+  },
+};
+
+const SOURCE_LABELS: Record<string, string> = {
+  contact_form: "Contact Form",
+  newsletter: "Newsletter",
+  import: "Imported",
+};
+
+function buildCampaignHtml(bodyText: string) {
+  const bodyHtml = bodyText
+    .split("\n")
+    .map((line) => (line.trim() ? `<p style="line-height:1.6;margin:0 0 12px;color:#444;">${line}</p>` : ""))
+    .join("\n");
+
+  return `
+  <div style="background:#fdf3f6;padding:32px 16px;font-family:Helvetica,Arial,sans-serif;">
+    <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);">
+      <div style="padding:32px;">
+        ${bodyHtml}
+      </div>
+      <div style="padding:20px 32px;background:#fdf3f6;text-align:center;">
+        <p style="margin:0;color:#999;font-size:12px;">${config.appName}</p>
+      </div>
+    </div>
+  </div>`;
+}
+
 export default function AdminPage() {
   const [authed, setAuthed] = useState(false);
   const [password, setPassword] = useState("");
@@ -66,12 +213,51 @@ export default function AdminPage() {
   const [loadError, setLoadError] = useState("");
   const [copyLabel, setCopyLabel] = useState("Copy");
   const [importStatus, setImportStatus] = useState("");
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasteText, setPasteText] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Partial<Subscriber>>({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [addContactForm, setAddContactForm] = useState<Partial<Subscriber>>({});
+  const [addContactSaving, setAddContactSaving] = useState(false);
+  const [addContactError, setAddContactError] = useState("");
+
+  const [viewingMessage, setViewingMessage] = useState<Subscriber | null>(null);
+
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [viewingCampaign, setViewingCampaign] = useState<Campaign | null>(null);
+  const [campaignSearch, setCampaignSearch] = useState("");
+  const [campaignTypeFilter, setCampaignTypeFilter] = useState("all");
+
+  const [showComposer, setShowComposer] = useState(false);
+  const [composerTemplateKey, setComposerTemplateKey] = useState("custom");
+  const [composerSubject, setComposerSubject] = useState("");
+  const [composerBody, setComposerBody] = useState("");
+  const [composerMode, setComposerMode] = useState<"select" | "all" | "source">("select");
+  const [composerSourceFilter, setComposerSourceFilter] = useState("contact_form");
+  const [composerSelectedIds, setComposerSelectedIds] = useState<Set<string>>(new Set());
+  const [composerScheduledAt, setComposerScheduledAt] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendStatus, setSendStatus] = useState("");
+
+  const [sendLimit, setSendLimit] = useState<{ limit: number | null; usedToday: number; remaining: number | null } | null>(null);
+  const [limitAlert, setLimitAlert] = useState("");
+
+  // ── Bulk selection on the main subscribers table ───────────────────────
   const [selectedSubscriberIds, setSelectedSubscriberIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [subscriberSearch, setSubscriberSearch] = useState("");
   const [subscriberSourceFilter, setSubscriberSourceFilter] = useState("all");
+  const [showResendCampaign, setShowResendCampaign] = useState(false);
+  const [resendCampaignId, setResendCampaignId] = useState("");
+  const [resendSending, setResendSending] = useState(false);
+  const [resendStatus, setResendStatus] = useState("");
 
   useEffect(() => {
     const saved = sessionStorage.getItem(SESSION_KEY);
@@ -81,25 +267,13 @@ export default function AdminPage() {
     }
   }, []);
 
-  const logOut = () => {
-    sessionStorage.removeItem(SESSION_KEY);
-    setPassword("");
-    setAuthed(false);
-  };
-
-  const loadSubscribers = async () => {
+  const loadSubscribers = async (pw: string) => {
     setLoading(true);
     setLoadError("");
     try {
       const res = await fetch("/api/crm/subscribers", {
-        headers: { "x-admin-password": password },
-        cache: "no-store",
+        headers: { "x-admin-password": pw },
       });
-      // Saved password no longer matches ADMIN_PASSWORD — back to login.
-      if (res.status === 401) {
-        logOut();
-        return;
-      }
       if (!res.ok) throw new Error("Failed to load subscribers");
       const json = await res.json();
       setSubscribers(json.subscribers || []);
@@ -110,28 +284,56 @@ export default function AdminPage() {
     }
   };
 
+  const loadCampaigns = async (pw: string) => {
+    setLoadingCampaigns(true);
+    try {
+      const res = await fetch("/api/crm/campaigns", {
+        headers: { "x-admin-password": pw },
+      });
+      if (!res.ok) throw new Error("Failed to load campaigns");
+      const json = await res.json();
+      setCampaigns(json.campaigns || []);
+    } catch {
+      // Non-fatal — the subscribers table above still works.
+    } finally {
+      setLoadingCampaigns(false);
+    }
+  };
+
+  const loadSendLimit = async (pw: string) => {
+    try {
+      const res = await fetch("/api/crm/send-limit", {
+        headers: { "x-admin-password": pw },
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      setSendLimit({ limit: json.limit, usedToday: json.usedToday, remaining: json.remaining });
+    } catch {
+      // Non-fatal — sending still works without the live counter.
+    }
+  };
+
   useEffect(() => {
-    if (authed) loadSubscribers();
+    if (authed) {
+      loadSubscribers(password);
+      loadCampaigns(password);
+      loadSendLimit(password);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const res = await fetch("/api/crm/subscribers", {
-        headers: { "x-admin-password": password },
-        cache: "no-store",
-      });
-      if (res.ok) {
-        sessionStorage.setItem(SESSION_KEY, password);
-        setAuthed(true);
-        setAuthError("");
-      } else if (res.status === 401) {
-        setAuthError("Wrong password.");
-      } else {
-        setAuthError("Could not reach the backend. Check ENIGMA_API_URL and try again.");
-      }
-    } catch {
+    const res = await fetch("/api/crm/subscribers", {
+      headers: { "x-admin-password": password },
+    });
+    if (res.ok) {
+      sessionStorage.setItem(SESSION_KEY, password);
+      setAuthed(true);
+      setAuthError("");
+    } else if (res.status === 401) {
+      setAuthError("Wrong password.");
+    } else {
       setAuthError("Could not reach the backend. Check ENIGMA_API_URL and try again.");
     }
   };
@@ -160,6 +362,124 @@ export default function AdminPage() {
     setTimeout(() => setCopyLabel("Copy"), 1500);
   };
 
+  const handleImportClick = () => fileInputRef.current?.click();
+
+  // Shared by both the file-upload and paste-contacts flows: normalize raw
+  // rows (whatever their original column names/casing were), then POST.
+  const importRows = async (rawRows: Record<string, any>[]) => {
+    const parsed = rawRows
+      .map((row) => ({
+        name: findField(row, ["name", "full name"]),
+        email: findField(row, ["email", "email address"]),
+        phone: findField(row, ["phone", "phone number"]),
+        message: findField(row, ["message", "notes"]),
+      }))
+      .filter((row) => row.email);
+
+    if (parsed.length === 0) {
+      setImportStatus("No rows with an email found.");
+      return;
+    }
+
+    setImportStatus(`Importing ${parsed.length} rows...`);
+    try {
+      const res = await fetch("/api/crm/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": password,
+        },
+        body: JSON.stringify({
+          clientSlug: config.clientSlug,
+          clientName: config.appName,
+          subscribers: parsed,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Import failed");
+      const json = await res.json();
+      setImportStatus(
+        `Imported ${json.insertedCount}, skipped ${json.skippedCount} duplicate(s).`
+      );
+      loadSubscribers(password);
+    } catch {
+      setImportStatus("Import failed — try again.");
+    }
+  };
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportStatus("Reading file...");
+    try {
+      const buffer = await file.arrayBuffer();
+      const book = XLSX.read(buffer, { type: "array" });
+      const sheet = book.Sheets[book.SheetNames[0]];
+      const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet);
+      await importRows(rawRows);
+    } catch {
+      setImportStatus("Import failed — check the file format and try again.");
+    } finally {
+      e.target.value = "";
+    }
+  };
+
+  const handlePasteImport = async () => {
+    const rawRows = parsePastedContacts(pasteText);
+    if (rawRows.length === 0) {
+      setImportStatus("Nothing to import — paste some contacts first.");
+      return;
+    }
+    await importRows(rawRows);
+    setPasteText("");
+    setShowPaste(false);
+  };
+
+  // ── Edit / delete ─────────────────────────────────────────────────────
+
+  const openEdit = (subscriber: Subscriber) => {
+    setEditingId(subscriber._id);
+    setEditForm({ ...subscriber });
+    setEditError("");
+  };
+
+  const closeEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+    setEditError("");
+  };
+
+  const handleEditSave = async () => {
+    if (!editingId) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      const res = await fetch(`/api/crm/subscribers/${editingId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": password,
+        },
+        body: JSON.stringify({
+          name: editForm.name || "",
+          email: editForm.email || "",
+          phone: editForm.phone || "",
+          message: editForm.message || "",
+          source: editForm.source || "contact_form",
+        }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      const json = await res.json();
+      setSubscribers((prev) => prev.map((s) => (s._id === editingId ? json.subscriber : s)));
+      closeEdit();
+    } catch {
+      setEditError("Could not save changes — try again.");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const handleDelete = async (subscriber: Subscriber) => {
     const confirmDelete = window.confirm(
       `Delete ${subscriber.name || subscriber.email}? This can't be undone.`
@@ -169,10 +489,18 @@ export default function AdminPage() {
     try {
       const res = await fetch(`/api/crm/subscribers/${subscriber._id}`, {
         method: "DELETE",
-        headers: { "x-admin-password": password },
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": password,
+        },
       });
       if (!res.ok) throw new Error("Delete failed");
       setSubscribers((prev) => prev.filter((s) => s._id !== subscriber._id));
+      setComposerSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(subscriber._id);
+        return next;
+      });
       setSelectedSubscriberIds((prev) => {
         const next = new Set(prev);
         next.delete(subscriber._id);
@@ -182,6 +510,8 @@ export default function AdminPage() {
       window.alert("Could not delete this subscriber — try again.");
     }
   };
+
+  // ── Bulk selection / actions on the main table ─────────────────────────
 
   // Search + source filter for the main table. Select All and bulk actions
   // only ever apply to the rows currently shown.
@@ -235,7 +565,7 @@ export default function AdminPage() {
         ids.map((id) =>
           fetch(`/api/crm/subscribers/${id}`, {
             method: "DELETE",
-            headers: { "x-admin-password": password },
+            headers: { "Content-Type": "application/json", "x-admin-password": password },
           })
             .then((res) => ({ id, ok: res.ok }))
             .catch(() => ({ id, ok: false }))
@@ -243,6 +573,7 @@ export default function AdminPage() {
       );
       const deleted = new Set(results.filter((r) => r.ok).map((r) => r.id));
       setSubscribers((prev) => prev.filter((s) => !deleted.has(s._id)));
+      setComposerSelectedIds((prev) => new Set(Array.from(prev).filter((id) => !deleted.has(id))));
       setSelectedSubscriberIds(new Set(ids.filter((id) => !deleted.has(id))));
       if (deleted.size < ids.length) {
         window.alert(
@@ -254,63 +585,273 @@ export default function AdminPage() {
     }
   };
 
-  const handleImportClick = () => fileInputRef.current?.click();
+  const openResendCampaign = () => {
+    if (selectedSubscriberIds.size === 0) return;
+    setResendCampaignId("");
+    setResendStatus("");
+    setShowResendCampaign(true);
+    if (campaigns.length === 0) loadCampaigns(password);
+  };
 
-  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleResendCampaign = async () => {
+    const campaign = campaigns.find((c) => c._id === resendCampaignId);
+    if (!campaign) {
+      setResendStatus("Choose a campaign to send.");
+      return;
+    }
+    const recipientIds = Array.from(selectedSubscriberIds);
 
-    setImportStatus("Reading file...");
+    const confirmSend = window.confirm(
+      `Send "${campaign.subject}" to ${recipientIds.length} contact${recipientIds.length === 1 ? "" : "s"}?`
+    );
+    if (!confirmSend) return;
+
+    setResendSending(true);
+    setResendStatus("Sending...");
     try {
-      const buffer = await file.arrayBuffer();
-      const book = XLSX.read(buffer, { type: "array" });
-      const sheet = book.Sheets[book.SheetNames[0]];
-      const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet);
+      const res = await fetch("/api/crm/campaigns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-password": password },
+        body: JSON.stringify({
+          templateKey: campaign.templateKey,
+          subject: campaign.subject,
+          html: campaign.html,
+          recipientIds,
+        }),
+      });
+      const json = await res.json();
 
-      const parsed = rawRows
-        .map((row) => ({
-          name: findField(row, ["name", "full name"]),
-          email: findField(row, ["email", "email address"]),
-          phone: findField(row, ["phone", "phone number"]),
-          message: findField(row, ["message", "notes"]),
-        }))
-        .filter((row) => row.email);
-
-      if (parsed.length === 0) {
-        setImportStatus("No rows with an email column found.");
+      if (res.status === 429 || json.limitExceeded) {
+        setResendStatus("");
+        setLimitAlert(
+          json.message ||
+            `Sending to ${recipientIds.length} would exceed today's OUTREACH send limit.`
+        );
+        setSendLimit({ limit: json.limit, usedToday: json.usedToday, remaining: json.remaining });
         return;
       }
 
-      setImportStatus(`Importing ${parsed.length} rows...`);
+      if (!res.ok) throw new Error("Send failed");
 
-      const res = await fetch(
-        "/api/crm/import",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-admin-password": password,
-          },
-          body: JSON.stringify({
-            clientSlug: config.clientSlug,
-            clientName: config.appName,
-            subscribers: parsed,
-          }),
-        }
-      );
-
-      if (!res.ok) throw new Error("Import failed");
-      const json = await res.json();
-      setImportStatus(
-        `Imported ${json.insertedCount}, skipped ${json.skippedCount} duplicate(s).`
-      );
-      loadSubscribers();
+      setResendStatus(`Sent to ${recipientIds.length} contact${recipientIds.length === 1 ? "" : "s"}.`);
+      loadCampaigns(password);
+      loadSendLimit(password);
+      setTimeout(() => {
+        setShowResendCampaign(false);
+        setResendStatus("");
+        setSelectedSubscriberIds(new Set());
+      }, 1200);
     } catch {
-      setImportStatus("Import failed — check the file format and try again.");
+      setResendStatus("Could not send — try again.");
     } finally {
-      e.target.value = "";
+      setResendSending(false);
     }
   };
+
+  // ── Add contact ──────────────────────────────────────────────────────
+
+  const openAddContact = () => {
+    setAddContactForm({ source: "contact_form" });
+    setAddContactError("");
+    setShowAddContact(true);
+  };
+
+  const closeAddContact = () => {
+    setShowAddContact(false);
+    setAddContactForm({});
+    setAddContactError("");
+  };
+
+  const handleAddContactSave = async () => {
+    if (!addContactForm.email?.trim()) {
+      setAddContactError("Email is required.");
+      return;
+    }
+    setAddContactSaving(true);
+    setAddContactError("");
+    try {
+      const res = await fetch("/api/crm/subscribers", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": password,
+        },
+        body: JSON.stringify({
+          name: addContactForm.name || "",
+          email: addContactForm.email || "",
+          phone: addContactForm.phone || "",
+          message: addContactForm.message || "",
+          source: addContactForm.source || "contact_form",
+        }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      const json = await res.json();
+      if (json.duplicate) {
+        setAddContactError(json.message || "A contact with this email already exists.");
+        return;
+      }
+      setSubscribers((prev) => [json.subscriber, ...prev]);
+      closeAddContact();
+    } catch {
+      setAddContactError("Could not add this contact — try again.");
+    } finally {
+      setAddContactSaving(false);
+    }
+  };
+
+  // ── Campaign composer ────────────────────────────────────────────────
+
+  const openComposer = (templateKey: string, presetSelectedIds?: string[]) => {
+    const preset = TEMPLATE_PRESETS[templateKey] || TEMPLATE_PRESETS.custom;
+    setComposerTemplateKey(templateKey);
+    setComposerSubject(preset.subject);
+    setComposerBody(preset.body);
+    setComposerScheduledAt("");
+    setSendStatus("");
+    if (presetSelectedIds) {
+      setComposerMode("select");
+      setComposerSelectedIds(new Set(presetSelectedIds));
+    } else {
+      setComposerMode("select");
+      setComposerSelectedIds(new Set());
+    }
+    setShowComposer(true);
+  };
+
+  const openReply = (subscriber: Subscriber) => {
+    setComposerTemplateKey("reply");
+    setComposerSubject(`Re: your message to ${config.appName}`);
+    setComposerBody(`Hi (name),\n\n`);
+    setComposerMode("select");
+    setComposerSelectedIds(new Set([subscriber._id]));
+    setComposerScheduledAt("");
+    setSendStatus("");
+    setShowComposer(true);
+  };
+
+  const closeComposer = () => {
+    setShowComposer(false);
+    setSendStatus("");
+    setComposerScheduledAt("");
+  };
+
+  const toggleComposerSelected = (id: string) => {
+    setComposerSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const resolveRecipientIds = (): string[] => {
+    if (composerMode === "all") return subscribers.map((s) => s._id);
+    if (composerMode === "source") {
+      return subscribers.filter((s) => s.source === composerSourceFilter).map((s) => s._id);
+    }
+    return Array.from(composerSelectedIds);
+  };
+
+  const handleSendCampaign = async () => {
+    const recipientIds = resolveRecipientIds();
+    if (!composerSubject.trim() || !composerBody.trim()) {
+      setSendStatus("Subject and message body are required.");
+      return;
+    }
+    if (recipientIds.length === 0) {
+      setSendStatus("Select at least one recipient.");
+      return;
+    }
+
+    const scheduledDate = composerScheduledAt ? new Date(composerScheduledAt) : null;
+    if (scheduledDate && Number.isNaN(scheduledDate.getTime())) {
+      setSendStatus("Invalid scheduled time.");
+      return;
+    }
+
+    const confirmSend = window.confirm(
+      scheduledDate
+        ? `Schedule this email for ${scheduledDate.toLocaleString()} to ${recipientIds.length} recipient${recipientIds.length === 1 ? "" : "s"}?`
+        : `Send this email to ${recipientIds.length} recipient${recipientIds.length === 1 ? "" : "s"}?`
+    );
+    if (!confirmSend) return;
+
+    setSending(true);
+    setSendStatus(scheduledDate ? "Scheduling..." : "Sending...");
+    try {
+      const res = await fetch("/api/crm/campaigns", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-password": password,
+        },
+        body: JSON.stringify({
+          templateKey: composerTemplateKey,
+          subject: composerSubject,
+          html: buildCampaignHtml(composerBody),
+          recipientIds,
+          ...(scheduledDate ? { scheduledAt: scheduledDate.toISOString() } : {}),
+        }),
+      });
+      const json = await res.json();
+
+      if (res.status === 429 || json.limitExceeded) {
+        setSendStatus("");
+        setLimitAlert(
+          json.message ||
+            `Sending to ${recipientIds.length} would exceed today's OUTREACH send limit.`
+        );
+        setSendLimit({ limit: json.limit, usedToday: json.usedToday, remaining: json.remaining });
+        return;
+      }
+
+      if (!res.ok) throw new Error("Send failed");
+
+      setSendStatus(
+        scheduledDate
+          ? `Scheduled for ${scheduledDate.toLocaleString()} — ${recipientIds.length} recipient${recipientIds.length === 1 ? "" : "s"} queued.`
+          : `Sent to ${recipientIds.length} recipient${recipientIds.length === 1 ? "" : "s"}.`
+      );
+      loadCampaigns(password);
+      loadSendLimit(password);
+      setTimeout(() => {
+        setShowComposer(false);
+        setSendStatus("");
+        setComposerScheduledAt("");
+      }, 1200);
+    } catch {
+      setSendStatus("Could not send — try again.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const filteredCampaigns = useMemo(() => {
+    const q = campaignSearch.trim().toLowerCase();
+    return campaigns.filter((c) => {
+      const matchesQuery = !q || c.subject.toLowerCase().includes(q);
+      const matchesType = campaignTypeFilter === "all" || c.templateKey === campaignTypeFilter;
+      return matchesQuery && matchesType;
+    });
+  }, [campaigns, campaignSearch, campaignTypeFilter]);
+
+  // Kept minimal on purpose — everything here is derived from the
+  // CrmCampaign records already loaded above, so there's no need for a
+  // separate analytics table.
+  const campaignAnalytics = useMemo(() => {
+    const byType = new Map<string, { label: string; campaignCount: number; recipientCount: number; deliveredCount: number; failedCount: number }>();
+    campaigns.forEach((c) => {
+      const key = c.templateKey || "custom";
+      const label = TEMPLATE_PRESETS[key]?.label || (key === "reply" ? "Reply" : "Custom");
+      const entry = byType.get(key) || { label, campaignCount: 0, recipientCount: 0, deliveredCount: 0, failedCount: 0 };
+      entry.campaignCount += 1;
+      entry.recipientCount += c.recipients.length;
+      entry.deliveredCount += c.recipients.filter((r) => !r.error).length;
+      entry.failedCount += c.recipients.filter((r) => r.error).length;
+      byType.set(key, entry);
+    });
+    return Array.from(byType.entries()).map(([key, stats]) => ({ key, ...stats }));
+  }, [campaigns]);
 
   if (!authed) {
     return (
@@ -342,32 +883,33 @@ export default function AdminPage() {
     );
   }
 
+  const recipientPreviewCount = resolveRecipientIds().length;
+
   return (
     <div data-theme={config.colors.theme} className="min-h-screen bg-base-100 px-6 py-10">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
           <h1 className="font-display text-3xl tracking-wide">
-            NEWSLETTER & CONTACT SUBSCRIBERS
+            MAILING LIST & ANALYTICS
           </h1>
           <button
-            onClick={logOut}
+            onClick={() => {
+              sessionStorage.removeItem(SESSION_KEY);
+              setAuthed(false);
+            }}
             className="btn btn-ghost btn-sm"
           >
             Log Out
           </button>
         </div>
 
+        <InternalAnalyticsCards password={password} />
+
         <div className="flex flex-wrap gap-3 mb-6">
-          <button onClick={handleExportCsv} className="btn btn-outline btn-sm" disabled={!subscribers.length}>
-            Export CSV
+          <button onClick={openAddContact} className="btn btn-primary btn-sm">
+            + Add Contact
           </button>
-          <button onClick={handleExportXlsx} className="btn btn-outline btn-sm" disabled={!subscribers.length}>
-            Export XLSX
-          </button>
-          <button onClick={handleCopy} className="btn btn-outline btn-sm" disabled={!subscribers.length}>
-            {copyLabel}
-          </button>
-          <button onClick={handleImportClick} className="btn btn-primary btn-sm">
+          <button onClick={handleImportClick} className="btn btn-primary btn-outline btn-sm">
             Import CSV/XLSX
           </button>
           <input
@@ -377,10 +919,55 @@ export default function AdminPage() {
             className="hidden"
             onChange={handleImportFile}
           />
-          <button onClick={loadSubscribers} className="btn btn-ghost btn-sm">
+          <button onClick={() => setShowPaste((v) => !v)} className="btn btn-primary btn-outline btn-sm">
+            Paste Contacts
+          </button>
+          <div className="dropdown">
+            <label tabIndex={0} className={`btn btn-outline btn-sm ${!subscribers.length ? "btn-disabled" : ""}`}>
+              Export ▾
+            </label>
+            <ul tabIndex={0} className="dropdown-content menu menu-sm bg-base-100 border border-base-300 rounded-lg shadow-md w-40 z-10 p-1">
+              <li><a onClick={handleExportCsv}>Export as CSV</a></li>
+              <li><a onClick={handleExportXlsx}>Export as XLSX</a></li>
+            </ul>
+          </div>
+          <button onClick={handleCopy} className="btn btn-outline btn-sm" disabled={!subscribers.length}>
+            {copyLabel}
+          </button>
+          <button onClick={() => loadSubscribers(password)} className="btn btn-ghost btn-sm">
             Refresh
           </button>
         </div>
+
+        {showPaste && (
+          <div className="mb-6 rounded-lg border border-base-300 p-4">
+            <p className="text-sm text-base-content/60 mb-2">
+              Paste contacts from a spreadsheet or a plain list — one per line. Works with or
+              without a header row (Name, Email, Phone, Message).
+            </p>
+            <textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder={"Name\tEmail\tPhone\nJane Doe\tjane@example.com\t305-555-0100"}
+              rows={6}
+              className="textarea textarea-bordered w-full font-mono text-xs"
+            />
+            <div className="flex gap-3 mt-3">
+              <button onClick={handlePasteImport} className="btn btn-primary btn-sm" disabled={!pasteText.trim()}>
+                Import Pasted Contacts
+              </button>
+              <button
+                onClick={() => {
+                  setShowPaste(false);
+                  setPasteText("");
+                }}
+                className="btn btn-ghost btn-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {importStatus && (
           <p className="text-sm text-base-content/70 mb-4">{importStatus}</p>
@@ -436,6 +1023,7 @@ export default function AdminPage() {
                     Actions ▾
                   </label>
                   <ul tabIndex={0} className="dropdown-content menu menu-sm bg-base-100 border border-base-300 rounded-lg shadow-md w-52 z-10 p-1">
+                    <li><a onClick={openResendCampaign}>Send Existing Campaign</a></li>
                     <li><a onClick={handleBulkDelete} className={bulkDeleting ? "pointer-events-none opacity-50" : "text-error"}>
                       {bulkDeleting ? "Deleting..." : "Delete Selected"}
                     </a></li>
@@ -450,7 +1038,7 @@ export default function AdminPage() {
         )}
 
         {!loading && !loadError && (
-          <div className="overflow-x-auto border border-base-300 rounded-lg">
+          <div className="overflow-x-auto border border-base-300 rounded-lg mb-16">
             <table className="table">
               <thead>
                 <tr>
@@ -467,8 +1055,8 @@ export default function AdminPage() {
                   <th>Name</th>
                   <th>Email</th>
                   <th>Phone</th>
-                  <th>Message</th>
                   <th>Source</th>
+                  <th>Message</th>
                   <th>Signed Up</th>
                 </tr>
               </thead>
@@ -485,21 +1073,34 @@ export default function AdminPage() {
                       />
                     </td>
                     <td>
-                      <button
-                        onClick={() => handleDelete(s)}
-                        className="btn btn-ghost btn-xs text-error"
-                        title="Delete"
-                        aria-label="Delete"
-                      >
-                        Delete
-                      </button>
+                      <div className="flex gap-2">
+                        <button onClick={() => openEdit(s)} className="btn btn-ghost btn-xs" title="Edit" aria-label="Edit">
+                          <PencilIcon />
+                        </button>
+                        <button onClick={() => handleDelete(s)} className="btn btn-ghost btn-xs text-error" title="Delete" aria-label="Delete">
+                          <TrashIcon />
+                        </button>
+                      </div>
                     </td>
                     <td>{s.name || "—"}</td>
                     <td>{s.email}</td>
                     <td>{s.phone || "—"}</td>
-                    <td className="max-w-xs truncate">{s.message || "—"}</td>
                     <td>
                       <span className="badge badge-sm">{SOURCE_LABELS[s.source] || s.source}</span>
+                    </td>
+                    <td>
+                      <div className="flex gap-2">
+                        {s.message ? (
+                          <button onClick={() => setViewingMessage(s)} className="btn btn-outline btn-xs">
+                            See Message
+                          </button>
+                        ) : (
+                          <span className="text-base-content/40 text-xs">—</span>
+                        )}
+                        <button onClick={() => openReply(s)} className="btn btn-primary btn-xs">
+                          Reply
+                        </button>
+                      </div>
                     </td>
                     <td>{new Date(s.createdAt).toLocaleDateString()}</td>
                   </tr>
@@ -515,7 +1116,540 @@ export default function AdminPage() {
             </table>
           </div>
         )}
+
+        {/* ── OUTREACH ──────────────────────────────────────────────── */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-2">
+          <h2 className="font-display text-2xl tracking-wide">OUTREACH</h2>
+          <div className="ml-auto flex items-center gap-4">
+            {sendLimit && sendLimit.limit != null && (
+              <span
+                className={`text-sm ${
+                  sendLimit.remaining !== null && sendLimit.remaining <= 0
+                    ? "text-error font-medium"
+                    : "text-base-content/60"
+                }`}
+                title={`Daily OUTREACH send limit — ${sendLimit.limit} out of the shared Resend account limit`}
+              >
+                Daily limit: {sendLimit.usedToday} / {sendLimit.limit} sent
+              </span>
+            )}
+            <button onClick={() => openComposer("custom")} className="btn btn-primary btn-sm">
+              New Campaign
+            </button>
+          </div>
+        </div>
+
+        {limitAlert && (
+          <div className="modal modal-open">
+            <div className="modal-box max-w-md">
+              <h3 className="font-display text-xl tracking-wide mb-2 text-error">Daily Send Limit Reached</h3>
+              <p className="text-base-content/80">{limitAlert}</p>
+              <p className="text-sm text-base-content/60 mt-3">
+                This limit resets at midnight. Reach out to Enigma Labs if you need it raised.
+              </p>
+              <div className="modal-action">
+                <button onClick={() => setLimitAlert("")} className="btn btn-primary">
+                  Got it
+                </button>
+              </div>
+            </div>
+            <div className="modal-backdrop" onClick={() => setLimitAlert("")} />
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-3 mb-6">
+          <input
+            type="text"
+            placeholder="Search by subject..."
+            value={campaignSearch}
+            onChange={(e) => setCampaignSearch(e.target.value)}
+            className="input input-bordered input-sm w-full max-w-xs"
+          />
+          <select
+            value={campaignTypeFilter}
+            onChange={(e) => setCampaignTypeFilter(e.target.value)}
+            className="select select-bordered select-sm"
+          >
+            <option value="all">All Types</option>
+            {Object.entries(TEMPLATE_PRESETS)
+              .filter(([key]) => key !== "custom")
+              .map(([key, preset]) => (
+                <option key={key} value={key}>{preset.label}</option>
+              ))}
+            <option value="reply">Reply</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+
+        {loadingCampaigns && <p className="text-base-content/60">Loading campaigns...</p>}
+
+        <div className="overflow-x-auto border border-base-300 rounded-lg mb-16">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Subject</th>
+                <th>Template</th>
+                <th>Recipients</th>
+                <th>Sent</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredCampaigns.map((c) => (
+                <tr key={c._id}>
+                  <td>{c.subject}</td>
+                  <td>
+                    <span className="badge badge-sm">
+                      {TEMPLATE_PRESETS[c.templateKey]?.label || (c.templateKey === "reply" ? "Reply" : "Custom")}
+                    </span>
+                  </td>
+                  <td>{c.recipientCount}</td>
+                  <td>{new Date(c.createdAt).toLocaleString()}</td>
+                  <td>
+                    <button onClick={() => setViewingCampaign(c)} className="btn btn-ghost btn-xs">
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!loadingCampaigns && filteredCampaigns.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="text-center text-base-content/50 py-8">
+                    {campaigns.length === 0 ? "No campaigns sent yet." : "No campaigns match your filters."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ── OUTREACH ANALYTICS ─────────────────────────────────────── */}
+        <h2 className="font-display text-2xl tracking-wide mb-4">OUTREACH ANALYTICS</h2>
+        {campaignAnalytics.length === 0 ? (
+          <p className="text-base-content/50 mb-4">Nothing sent yet — analytics will show up here once you send a campaign.</p>
+        ) : (
+          <div className="overflow-x-auto border border-base-300 rounded-lg">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Campaign Type</th>
+                  <th>Campaigns Sent</th>
+                  <th>Total Recipients</th>
+                  <th>Delivered</th>
+                  <th>Failed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {campaignAnalytics.map((stat) => (
+                  <tr key={stat.key}>
+                    <td>{stat.label}</td>
+                    <td>{stat.campaignCount}</td>
+                    <td>{stat.recipientCount}</td>
+                    <td className="text-success">
+                      {stat.deliveredCount}
+                      {stat.recipientCount > 0 && (
+                        <span className="text-base-content/50"> ({Math.round((stat.deliveredCount / stat.recipientCount) * 100)}%)</span>
+                      )}
+                    </td>
+                    <td className={stat.failedCount > 0 ? "text-error" : "text-base-content/50"}>{stat.failedCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <WebsiteAnalytics password={password} />
       </div>
+
+      {/* ── Edit subscriber modal ──────────────────────────────────── */}
+      {editingId && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-lg">
+            <h3 className="font-display text-xl tracking-wide mb-4">Edit Subscriber</h3>
+            <div className="flex flex-col gap-3">
+              <input
+                type="text"
+                placeholder="Name"
+                value={editForm.name || ""}
+                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                className="input input-bordered w-full"
+              />
+              <input
+                type="email"
+                placeholder="Email"
+                value={editForm.email || ""}
+                onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                className="input input-bordered w-full"
+              />
+              <input
+                type="tel"
+                placeholder="Phone"
+                value={editForm.phone || ""}
+                onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))}
+                className="input input-bordered w-full"
+              />
+              <select
+                value={editForm.source || "contact_form"}
+                onChange={(e) => setEditForm((f) => ({ ...f, source: e.target.value }))}
+                className="select select-bordered w-full"
+              >
+                <option value="contact_form">Contact Form</option>
+                <option value="newsletter">Newsletter</option>
+                <option value="import">Imported</option>
+              </select>
+              <textarea
+                placeholder="Message"
+                value={editForm.message || ""}
+                onChange={(e) => setEditForm((f) => ({ ...f, message: e.target.value }))}
+                rows={4}
+                className="textarea textarea-bordered w-full"
+              />
+              {editError && <p className="text-error text-sm">{editError}</p>}
+            </div>
+            <div className="modal-action">
+              <button onClick={closeEdit} className="btn btn-ghost" disabled={editSaving}>
+                Cancel
+              </button>
+              <button onClick={handleEditSave} className="btn btn-primary" disabled={editSaving}>
+                {editSaving ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+          <div className="modal-backdrop" onClick={closeEdit} />
+        </div>
+      )}
+
+      {/* ── Add contact modal ──────────────────────────────────────── */}
+      {showAddContact && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-lg">
+            <h3 className="font-display text-xl tracking-wide mb-4">Add Contact</h3>
+            <div className="flex flex-col gap-3">
+              <input
+                type="text"
+                placeholder="Name"
+                value={addContactForm.name || ""}
+                onChange={(e) => setAddContactForm((f) => ({ ...f, name: e.target.value }))}
+                className="input input-bordered w-full"
+              />
+              <input
+                type="email"
+                placeholder="Email"
+                value={addContactForm.email || ""}
+                onChange={(e) => setAddContactForm((f) => ({ ...f, email: e.target.value }))}
+                className="input input-bordered w-full"
+                autoFocus
+              />
+              <input
+                type="tel"
+                placeholder="Phone"
+                value={addContactForm.phone || ""}
+                onChange={(e) => setAddContactForm((f) => ({ ...f, phone: e.target.value }))}
+                className="input input-bordered w-full"
+              />
+              <select
+                value={addContactForm.source || "contact_form"}
+                onChange={(e) => setAddContactForm((f) => ({ ...f, source: e.target.value }))}
+                className="select select-bordered w-full"
+              >
+                <option value="contact_form">Contact Form</option>
+                <option value="newsletter">Newsletter</option>
+                <option value="import">Imported</option>
+              </select>
+              <textarea
+                placeholder="Message (optional)"
+                value={addContactForm.message || ""}
+                onChange={(e) => setAddContactForm((f) => ({ ...f, message: e.target.value }))}
+                rows={4}
+                className="textarea textarea-bordered w-full"
+              />
+              {addContactError && <p className="text-error text-sm">{addContactError}</p>}
+            </div>
+            <div className="modal-action">
+              <button onClick={closeAddContact} className="btn btn-ghost" disabled={addContactSaving}>
+                Cancel
+              </button>
+              <button onClick={handleAddContactSave} className="btn btn-primary" disabled={addContactSaving}>
+                {addContactSaving ? "Saving..." : "Add Contact"}
+              </button>
+            </div>
+          </div>
+          <div className="modal-backdrop" onClick={closeAddContact} />
+        </div>
+      )}
+
+      {/* ── View message modal ─────────────────────────────────────── */}
+      {viewingMessage && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-lg">
+            <h3 className="font-display text-xl tracking-wide mb-2">
+              Message from {viewingMessage.name || viewingMessage.email}
+            </h3>
+            <p className="text-sm text-base-content/60 mb-4">
+              {new Date(viewingMessage.createdAt).toLocaleString()}
+            </p>
+            <p className="whitespace-pre-wrap text-base-content/80">{viewingMessage.message}</p>
+            <div className="modal-action">
+              <button
+                onClick={() => {
+                  openReply(viewingMessage);
+                  setViewingMessage(null);
+                }}
+                className="btn btn-primary"
+              >
+                Reply
+              </button>
+              <button onClick={() => setViewingMessage(null)} className="btn btn-ghost">
+                Close
+              </button>
+            </div>
+          </div>
+          <div className="modal-backdrop" onClick={() => setViewingMessage(null)} />
+        </div>
+      )}
+
+      {/* ── Send existing campaign to selected contacts ───────────────── */}
+      {showResendCampaign && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-lg">
+            <h3 className="font-display text-xl tracking-wide mb-1">Send Existing Campaign</h3>
+            <p className="text-sm text-base-content/60 mb-4">
+              Sending to {selectedSubscriberIds.size} selected contact{selectedSubscriberIds.size === 1 ? "" : "s"}.
+            </p>
+
+            {loadingCampaigns && <p className="text-base-content/60">Loading campaigns...</p>}
+
+            {!loadingCampaigns && campaigns.length === 0 && (
+              <p className="text-base-content/60">No past campaigns to resend yet.</p>
+            )}
+
+            {!loadingCampaigns && campaigns.length > 0 && (
+              <select
+                value={resendCampaignId}
+                onChange={(e) => setResendCampaignId(e.target.value)}
+                className="select select-bordered w-full"
+              >
+                <option value="">Choose a campaign...</option>
+                {campaigns.map((c) => (
+                  <option key={c._id} value={c._id}>
+                    {c.subject} — {new Date(c.createdAt).toLocaleDateString()}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {resendStatus && <p className="text-sm mt-3">{resendStatus}</p>}
+
+            <div className="modal-action">
+              <button
+                onClick={() => setShowResendCampaign(false)}
+                className="btn btn-ghost"
+                disabled={resendSending}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleResendCampaign}
+                className="btn btn-primary"
+                disabled={resendSending || !resendCampaignId}
+              >
+                {resendSending ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </div>
+          <div className="modal-backdrop" onClick={() => !resendSending && setShowResendCampaign(false)} />
+        </div>
+      )}
+
+      {/* ── View sent campaign modal ───────────────────────────────── */}
+      {viewingCampaign && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-2xl">
+            <h3 className="font-display text-xl tracking-wide mb-1">{viewingCampaign.subject}</h3>
+            <p className="text-sm text-base-content/60 mb-4">
+              Sent {new Date(viewingCampaign.createdAt).toLocaleString()} to {viewingCampaign.recipientCount} recipient
+              {viewingCampaign.recipientCount === 1 ? "" : "s"}
+            </p>
+            <div className="border border-base-300 rounded-lg overflow-hidden mb-4">
+              <iframe
+                title="Sent email preview"
+                srcDoc={viewingCampaign.html}
+                className="w-full h-80 bg-white"
+              />
+            </div>
+            <div className="max-h-40 overflow-y-auto">
+              <table className="table table-xs">
+                <thead>
+                  <tr>
+                    <th>Recipient</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewingCampaign.recipients.map((r) => (
+                    <tr key={r.subscriberId || r.email}>
+                      <td>{r.name ? `${r.name} <${r.email}>` : r.email}</td>
+                      <td>{r.error ? <span className="text-error">{r.error}</span> : <span className="text-success">Sent</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="modal-action">
+              <button onClick={() => setViewingCampaign(null)} className="btn btn-ghost">
+                Close
+              </button>
+            </div>
+          </div>
+          <div className="modal-backdrop" onClick={() => setViewingCampaign(null)} />
+        </div>
+      )}
+
+      {/* ── Campaign composer modal ────────────────────────────────── */}
+      {showComposer && (
+        <div className="modal modal-open">
+          <div className="modal-box max-w-2xl">
+            <h3 className="font-display text-xl tracking-wide mb-4">New Campaign</h3>
+
+            <div className="flex flex-col gap-3 mb-4">
+              <select
+                value={composerTemplateKey}
+                onChange={(e) => {
+                  const key = e.target.value;
+                  const preset = TEMPLATE_PRESETS[key] || TEMPLATE_PRESETS.custom;
+                  setComposerTemplateKey(key);
+                  setComposerSubject(preset.subject);
+                  setComposerBody(preset.body);
+                }}
+                className="select select-bordered w-full"
+              >
+                {Object.entries(TEMPLATE_PRESETS).map(([key, preset]) => (
+                  <option key={key} value={key}>{preset.label}</option>
+                ))}
+                <option value="reply">Reply (blank)</option>
+              </select>
+              <input
+                type="text"
+                placeholder="Subject"
+                value={composerSubject}
+                onChange={(e) => setComposerSubject(e.target.value)}
+                className="input input-bordered w-full"
+              />
+              <textarea
+                placeholder="Message — use (name) to insert each recipient's first name"
+                value={composerBody}
+                onChange={(e) => setComposerBody(e.target.value)}
+                rows={8}
+                className="textarea textarea-bordered w-full font-mono text-sm"
+              />
+              <div>
+                <label className="label pt-0 pb-1">
+                  <span className="label-text">Schedule for later (optional)</span>
+                </label>
+                <input
+                  type="datetime-local"
+                  value={composerScheduledAt}
+                  onChange={(e) => setComposerScheduledAt(e.target.value)}
+                  className="input input-bordered w-full"
+                />
+                <p className="text-xs text-base-content/60 mt-1">
+                  Leave blank to send immediately. Otherwise this is held and delivered at that
+                  time (your local time) instead of right away.
+                </p>
+              </div>
+            </div>
+
+            <div className="border-t border-base-300 pt-4">
+              <p className="text-sm font-medium mb-2">Send to</p>
+              <div className="flex flex-wrap gap-4 mb-3">
+                <label className="label cursor-pointer gap-2 justify-start p-0">
+                  <input
+                    type="radio"
+                    name="composerMode"
+                    checked={composerMode === "select"}
+                    onChange={() => setComposerMode("select")}
+                    className="radio radio-primary radio-sm"
+                  />
+                  <span className="label-text">Select individually</span>
+                </label>
+                <label className="label cursor-pointer gap-2 justify-start p-0">
+                  <input
+                    type="radio"
+                    name="composerMode"
+                    checked={composerMode === "all"}
+                    onChange={() => setComposerMode("all")}
+                    className="radio radio-primary radio-sm"
+                  />
+                  <span className="label-text">All subscribers ({subscribers.length})</span>
+                </label>
+                <label className="label cursor-pointer gap-2 justify-start p-0">
+                  <input
+                    type="radio"
+                    name="composerMode"
+                    checked={composerMode === "source"}
+                    onChange={() => setComposerMode("source")}
+                    className="radio radio-primary radio-sm"
+                  />
+                  <span className="label-text">By source</span>
+                  {composerMode === "source" && (
+                    <select
+                      value={composerSourceFilter}
+                      onChange={(e) => setComposerSourceFilter(e.target.value)}
+                      className="select select-bordered select-xs ml-1"
+                    >
+                      <option value="contact_form">Contact Form</option>
+                      <option value="newsletter">Newsletter</option>
+                      <option value="import">Imported</option>
+                    </select>
+                  )}
+                </label>
+              </div>
+
+              {composerMode === "select" && (
+                <div className="max-h-48 overflow-y-auto border border-base-300 rounded-lg p-2">
+                  {subscribers.map((s) => (
+                    <label key={s._id} className="label cursor-pointer justify-start gap-2 py-1">
+                      <input
+                        type="checkbox"
+                        checked={composerSelectedIds.has(s._id)}
+                        onChange={() => toggleComposerSelected(s._id)}
+                        className="checkbox checkbox-primary checkbox-sm"
+                      />
+                      <span className="label-text text-sm">
+                        {s.name ? `${s.name} <${s.email}>` : s.email}
+                      </span>
+                    </label>
+                  ))}
+                  {subscribers.length === 0 && (
+                    <p className="text-sm text-base-content/50 p-2">No subscribers to select.</p>
+                  )}
+                </div>
+              )}
+
+              <p className="text-sm text-base-content/60 mt-2">
+                {recipientPreviewCount} recipient{recipientPreviewCount === 1 ? "" : "s"} selected
+              </p>
+            </div>
+
+            {sendStatus && <p className="text-sm mt-3">{sendStatus}</p>}
+
+            <div className="modal-action">
+              <button onClick={closeComposer} className="btn btn-ghost" disabled={sending}>
+                Cancel
+              </button>
+              <button onClick={handleSendCampaign} className="btn btn-primary" disabled={sending}>
+                {sending
+                  ? (composerScheduledAt ? "Scheduling..." : "Sending...")
+                  : composerScheduledAt
+                  ? `Schedule for ${recipientPreviewCount}`
+                  : `Send to ${recipientPreviewCount}`}
+              </button>
+            </div>
+          </div>
+          <div className="modal-backdrop" onClick={closeComposer} />
+        </div>
+      )}
     </div>
   );
 }

@@ -1,14 +1,52 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import config from "@/config";
-import { forwardToBackend, isAdmin, unauthorized } from "@/libs/crmProxy";
 
-// Deletes one subscriber — used by the admin table's Delete button and
-// Delete Selected. clientSlug is set here, so a request can only ever
-// delete this client's contacts.
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  if (!isAdmin(req)) return unauthorized();
-  return forwardToBackend(`/api/crm/subscribers/${encodeURIComponent(params.id)}`, {
-    method: "DELETE",
-    body: { clientSlug: config.clientSlug },
+// Server-only — see app/api/crm/subscribers/route.ts for why these env vars
+// are unprefixed. Edit/delete for a single subscriber, used by the admin
+// table's Edit and Delete buttons.
+const ENIGMA_API_URL = process.env.ENIGMA_API_URL || "http://localhost:5001";
+// Fails closed: with no ADMIN_PASSWORD set, nobody gets in.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+
+function checkPassword(req: NextRequest) {
+  const password = req.headers.get("x-admin-password");
+  return ADMIN_PASSWORD !== "" && password === ADMIN_PASSWORD;
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  if (!checkPassword(req)) {
+    return NextResponse.json({ ok: false, message: "Invalid admin password." }, { status: 401 });
+  }
+
+  const body = await req.json();
+
+  const res = await fetch(`${ENIGMA_API_URL}/api/crm/subscribers/${params.id}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-password": ADMIN_PASSWORD,
+    },
+    body: JSON.stringify({ ...body, clientSlug: config.clientSlug }),
   });
+
+  const data = await res.json();
+  return NextResponse.json(data, { status: res.status });
+}
+
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  if (!checkPassword(req)) {
+    return NextResponse.json({ ok: false, message: "Invalid admin password." }, { status: 401 });
+  }
+
+  const res = await fetch(`${ENIGMA_API_URL}/api/crm/subscribers/${params.id}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-password": ADMIN_PASSWORD,
+    },
+    body: JSON.stringify({ clientSlug: config.clientSlug }),
+  });
+
+  const data = await res.json();
+  return NextResponse.json(data, { status: res.status });
 }
