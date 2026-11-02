@@ -1,6 +1,5 @@
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
-import PageBanner from "@/components/PageBanner";
 import GalleryCarousel from "@/components/GalleryCarousel";
 import config from "@/config";
 import { getSEOTags } from "@/libs/seo";
@@ -76,7 +75,9 @@ export default function GalleryPage() {
     <>
       <Header />
       <main>
-        <PageBanner title="GALLERY" compact />
+        {/* No banner — the slideshow starts right under the header. The heading
+            stays for screen readers and search engines. */}
+        <h1 className="sr-only">Gallery</h1>
 
         <section>
           <GalleryCarousel photos={photos} />

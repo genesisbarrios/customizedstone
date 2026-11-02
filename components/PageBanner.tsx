@@ -5,16 +5,12 @@ import Image from "next/image";
 // Custom object-position (30% from the top) keeps the crop centered on the
 // countertop/backsplash detail — plain object-top went too far and cut into
 // the cabinets above, while the default center crop showed too much floor.
-// `compact` = a slim title bar for pages where the content should start right
-// away (e.g. the gallery slideshow).
 export default function PageBanner({
   title,
   description,
-  compact = false,
 }: {
   title: string;
   description?: string;
-  compact?: boolean;
 }) {
   return (
     <section className="relative overflow-hidden border-b border-base-300">
@@ -28,15 +24,11 @@ export default function PageBanner({
       />
       <div className="absolute inset-0 bg-primary/80" />
 
-      <div className={`relative max-w-6xl mx-auto px-6 text-center ${compact ? "py-5" : "py-16"}`}>
-        <h1
-          className={`font-display tracking-wide text-primary-content ${
-            compact ? "text-2xl md:text-3xl" : "text-4xl md:text-5xl"
-          }`}
-        >
+      <div className="relative max-w-6xl mx-auto px-6 py-16 text-center">
+        <h1 className="font-display text-4xl md:text-5xl tracking-wide text-primary-content">
           {title}
         </h1>
-        {description && !compact && (
+        {description && (
           <p className="text-primary-content/80 mt-3 max-w-lg mx-auto">{description}</p>
         )}
       </div>
