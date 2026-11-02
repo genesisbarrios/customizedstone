@@ -76,10 +76,7 @@ export default function GalleryPage() {
     <>
       <Header />
       <main>
-        <PageBanner
-          title="GALLERY"
-          description="Real granite, marble, quartz, and onyx installations."
-        />
+        <PageBanner title="GALLERY" compact />
 
         <section>
           <GalleryCarousel photos={photos} />
