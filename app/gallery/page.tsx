@@ -11,8 +11,31 @@ export const metadata = getSEOTags({
   canonicalUrlRelative: "/gallery",
 });
 
-// Real project photos
+// Real project photos, newest first.
 const photos = [
+  // October 2026 batch, provided by the client.
+  { src: "/images/gallery/october2026/oct2026-01.jpg", alt: "Installer finishing a white marble-look slab shower wall with gray veining" },
+  { src: "/images/gallery/october2026/oct2026-02.jpg", alt: "Bathroom clad floor to ceiling in white marble-look slabs" },
+  { src: "/images/gallery/october2026/oct2026-03.jpg", alt: "Shower with full-height white marble-look slab walls and a recessed niche" },
+  { src: "/images/gallery/october2026/oct2026-04.jpg", alt: "Open kitchen with a long white stone island in progress" },
+  { src: "/images/gallery/october2026/oct2026-05.jpg", alt: "White stone waterfall countertop being installed on a covered patio" },
+  { src: "/images/gallery/october2026/oct2026-06.jpg", alt: "Outdoor kitchen with a gray stone island overlooking the water" },
+  { src: "/images/gallery/october2026/oct2026-07.jpg", alt: "Shower bench and curb in white stone during installation" },
+  { src: "/images/gallery/october2026/oct2026-08.jpg", alt: "Kitchen with granite countertops and backsplash, before renovation" },
+  { src: "/images/gallery/october2026/oct2026-09.jpg", alt: "Gray stone vanity with an integrated ramp sink" },
+  { src: "/images/gallery/october2026/oct2026-10.jpg", alt: "Black and white granite tub surround and deck" },
+  { src: "/images/gallery/october2026/oct2026-11.jpg", alt: "Charcoal stone floating vanity with an integrated sink" },
+  { src: "/images/gallery/october2026/oct2026-12.jpg", alt: "White quartz waterfall island with gray veining" },
+  { src: "/images/gallery/october2026/oct2026-13.jpg", alt: "White quartz waterfall island on new white cabinets" },
+  { src: "/images/gallery/october2026/oct2026-14.jpg", alt: "Stone shower wall with a large recessed niche during installation" },
+  { src: "/images/gallery/october2026/oct2026-15.jpg", alt: "White quartz waterfall kitchen counters with city views" },
+  { src: "/images/gallery/october2026/oct2026-16.jpg", alt: "L-shaped white quartz kitchen with waterfall edges" },
+  { src: "/images/gallery/october2026/oct2026-17.jpg", alt: "White quartz waterfall island with a wood slat panel" },
+  { src: "/images/gallery/october2026/oct2026-18.jpg", alt: "White stone kitchen island in a home under renovation" },
+  { src: "/images/gallery/october2026/oct2026-19.jpg", alt: "White quartz countertop around a farmhouse sink" },
+  { src: "/images/gallery/october2026/oct2026-20.jpg", alt: "Dramatic veined stone counter and full backsplash under bronze cabinets" },
+  { src: "/images/gallery/october2026/oct2026-21.jpg", alt: "Veined stone wet bar counter, backsplash, and shelf" },
+  // Earlier projects.
   { src: "/images/gallery/white-marble-backsplash-kitchen.jpg", alt: "White kitchen with marble backsplash and countertops" },
   { src: "/images/gallery/marble-island-open-kitchen.jpg", alt: "White marble waterfall-edge island in an open kitchen" },
   { src: "/images/gallery/white-quartz-waterfall-island.jpg", alt: "White quartz waterfall-edge island with dark cabinets" },
