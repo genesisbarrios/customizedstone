@@ -20,7 +20,7 @@ export default function PageBanner({
         fill
         priority
         sizes="100vw"
-        className="object-cover object-[center_30%]"
+        className="object-cover animate-banner-zoom object-[center_30%]"
       />
       <div className="absolute inset-0 bg-primary/80" />
 

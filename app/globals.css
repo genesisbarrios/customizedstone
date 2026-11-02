@@ -1,3 +1,60 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Scroll animations — see components/ScrollReveal.tsx. Uses the standalone
+   `translate` property so it never fights an element's own Tailwind
+   transform utilities. */
+@keyframes heroFadeUp {
+  from {
+    opacity: 0;
+    translate: 0 16px;
+  }
+}
+.hero-in {
+  animation: heroFadeUp 0.8s ease-out backwards;
+}
+.reveal {
+  opacity: 0;
+  translate: 0 2rem;
+  transition: opacity 0.7s ease-out, translate 0.7s ease-out, box-shadow 0.3s ease;
+}
+.reveal.reveal-in {
+  opacity: 1;
+  translate: none;
+  transition-delay: var(--reveal-delay, 0ms);
+}
+.reveal.revealed {
+  transition-delay: 0ms;
+}
+.lift.revealed {
+  transition: translate 0.3s ease-out, box-shadow 0.3s ease-out;
+}
+.lift.revealed:hover {
+  translate: 0 -6px;
+  box-shadow: 0 18px 40px -16px rgb(0 0 0 / 0.35);
+}
+.lift img {
+  transition: transform 0.7s ease-out;
+}
+.lift:hover .overflow-hidden img,
+.lift.overflow-hidden:hover img {
+  transform: scale(1.08);
+}
+@keyframes bannerKenBurns {
+  from {
+    transform: scale(1.05);
+  }
+  to {
+    transform: scale(1.15);
+  }
+}
+.animate-banner-zoom {
+  animation: bannerKenBurns 20s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-in,
+  .animate-banner-zoom {
+    animation: none;
+  }
+}

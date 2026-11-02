@@ -4,6 +4,7 @@ import { Viewport } from "next";
 import { getSEOTags, renderLocalBusinessSchema } from "@/libs/seo";
 import config from "@/config";
 import Tracking from "@/components/Tracking";
+import ScrollReveal from "@/components/ScrollReveal";
 import "./globals.css";
 
 const body = Inter({ subsets: ["latin"], variable: "--font-body" });
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="font-sans">
         {children}
         <Tracking />
+        <ScrollReveal />
       </body>
     </html>
   );
