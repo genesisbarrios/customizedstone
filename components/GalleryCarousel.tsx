@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 
 export interface GalleryPhoto {
@@ -8,24 +8,29 @@ export interface GalleryPhoto {
   alt: string;
 }
 
-const AUTOPLAY_MS = 4000;
+const AUTOPLAY_MS = 5000;
+const SWIPE_PX = 40;
 
-// Client component (needs state for the active slide) so the page itself
-// can stay a server component and keep its `export const metadata`.
+// Full-width, near-full-screen slideshow: one photo at a time on a dark
+// stage, with a blurred copy of the same photo filling the space around it
+// (so portrait and landscape shots both fill the screen). No thumbnails or
+// captions — alt text is kept for screen readers only. Arrows, swipe, and
+// the keyboard's arrow keys navigate; the corner button goes true
+// fullscreen. Client component so the page can stay a server component and
+// keep its `export const metadata`.
 export default function GalleryCarousel({ photos }: { photos: GalleryPhoto[] }) {
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const touchX = useRef<number | null>(null);
 
   const goTo = (index: number) => setActive((index + photos.length) % photos.length);
   const prev = () => goTo(active - 1);
   const next = () => goTo(active + 1);
 
-  // Auto-advances on a timer, paused while the pointer is over the carousel
-  // (or a control has focus, via focus/blur on the wrapper) so people can
-  // actually read a caption or study a photo without it changing under them.
-  // The effect re-runs whenever `active` changes — including from a manual
-  // click — so a manual navigation always gets a fresh full interval instead
-  // of advancing again almost immediately.
+  // Auto-advances, paused while the pointer is over the stage. Re-runs on
+  // every slide change so a manual navigation gets a fresh full interval.
   useEffect(() => {
     if (paused || photos.length <= 1) return;
     const id = setInterval(next, AUTOPLAY_MS);
@@ -33,64 +38,109 @@ export default function GalleryCarousel({ photos }: { photos: GalleryPhoto[] }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, paused, photos.length]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") prev();
+      if (e.key === "ArrowRight") next();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement === stageRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  // Preload the next photo so advancing doesn't flash.
+  useEffect(() => {
+    if (photos.length <= 1) return;
+    const img = new window.Image();
+    img.src = photos[(active + 1) % photos.length].src;
+  }, [active, photos]);
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else stageRef.current?.requestFullscreen?.();
+  };
+
+  const photo = photos[active];
+
   return (
     <div
+      ref={stageRef}
+      className={`relative w-full overflow-hidden bg-black select-none ${
+        isFullscreen ? "h-screen" : "h-[70svh] md:h-[85vh]"
+      }`}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
-      onFocus={() => setPaused(true)}
-      onBlur={() => setPaused(false)}
+      onTouchStart={(e) => (touchX.current = e.touches[0].clientX)}
+      onTouchEnd={(e) => {
+        if (touchX.current === null) return;
+        const dx = e.changedTouches[0].clientX - touchX.current;
+        if (dx > SWIPE_PX) prev();
+        if (dx < -SWIPE_PX) next();
+        touchX.current = null;
+      }}
+      aria-roledescription="carousel"
+      aria-label="Project photos"
     >
-      <div className="relative aspect-[4/3] sm:aspect-[16/9] rounded-lg overflow-hidden border border-base-300 bg-base-200">
-        <Image
-          key={photos[active].src}
-          src={photos[active].src}
-          alt={photos[active].alt}
-          fill
-          priority
-          sizes="(max-width: 768px) 100vw, 800px"
-          className="object-contain"
-        />
+      {/* Blurred fill behind the photo. */}
+      <Image
+        key={`bg-${photo.src}`}
+        src={photo.src}
+        alt=""
+        fill
+        sizes="40vw"
+        className="object-cover scale-110 blur-2xl opacity-50 gallery-fade"
+      />
+      <Image
+        key={photo.src}
+        src={photo.src}
+        alt={photo.alt}
+        fill
+        priority
+        sizes="100vw"
+        className="object-contain gallery-fade"
+      />
 
-        <button
-          type="button"
-          onClick={prev}
-          aria-label="Previous photo"
-          className="btn btn-circle btn-sm sm:btn-md absolute left-3 top-1/2 -translate-y-1/2 bg-base-100/80 hover:bg-base-100 border-none"
-        >
-          ❮
-        </button>
-        <button
-          type="button"
-          onClick={next}
-          aria-label="Next photo"
-          className="btn btn-circle btn-sm sm:btn-md absolute right-3 top-1/2 -translate-y-1/2 bg-base-100/80 hover:bg-base-100 border-none"
-        >
-          ❯
-        </button>
+      <button
+        type="button"
+        onClick={prev}
+        aria-label="Previous photo"
+        className="btn btn-circle btn-md md:btn-lg absolute left-3 md:left-6 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/70 border-none text-white text-xl"
+      >
+        ❮
+      </button>
+      <button
+        type="button"
+        onClick={next}
+        aria-label="Next photo"
+        className="btn btn-circle btn-md md:btn-lg absolute right-3 md:right-6 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/70 border-none text-white text-xl"
+      >
+        ❯
+      </button>
 
-        <div className="absolute bottom-3 right-3 rounded-full bg-base-100/80 px-3 py-1 text-xs font-medium">
-          {active + 1} / {photos.length}
-        </div>
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-3 py-1 text-xs font-medium text-white">
+        {active + 1} / {photos.length}
       </div>
 
-      <p className="text-center text-sm text-base-content/60 mt-3">{photos[active].alt}</p>
-
-      <div className="flex gap-2 mt-4 overflow-x-auto pb-2 -mx-1 px-1">
-        {photos.map((photo, i) => (
-          <button
-            key={photo.src}
-            type="button"
-            onClick={() => goTo(i)}
-            aria-label={`Go to photo ${i + 1}: ${photo.alt}`}
-            aria-current={i === active}
-            className={`relative w-20 h-16 shrink-0 rounded-md overflow-hidden border-2 transition-colors ${
-              i === active ? "border-secondary" : "border-transparent opacity-70 hover:opacity-100"
-            }`}
-          >
-            <Image src={photo.src} alt="" fill sizes="80px" className="object-cover" />
-          </button>
-        ))}
-      </div>
+      <button
+        type="button"
+        onClick={toggleFullscreen}
+        aria-label={isFullscreen ? "Exit fullscreen" : "View fullscreen"}
+        className="btn btn-circle btn-sm absolute top-4 right-4 bg-black/40 hover:bg-black/70 border-none text-white"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+          {isFullscreen ? (
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />
+          ) : (
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+          )}
+        </svg>
+      </button>
     </div>
   );
 }

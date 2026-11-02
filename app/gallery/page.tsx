@@ -81,10 +81,10 @@ export default function GalleryPage() {
           description="Real granite, marble, quartz, and onyx installations."
         />
 
-        <section className="max-w-3xl mx-auto px-6 py-16">
+        <section>
           <GalleryCarousel photos={photos} />
 
-          <div className="text-center mt-12">
+          <div className="text-center py-12">
             <a
               href={config.instagramUrl}
               target="_blank"

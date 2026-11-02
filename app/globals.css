@@ -58,3 +58,13 @@
     animation: none;
   }
 }
+
+/* Gallery slideshow crossfade — see components/GalleryCarousel.tsx. */
+@keyframes galleryFade {
+  from {
+    opacity: 0;
+  }
+}
+.gallery-fade {
+  animation: galleryFade 0.5s ease-out;
+}
