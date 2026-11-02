@@ -14,10 +14,10 @@ export const metadata = getSEOTags({
 // Real project photos, newest first.
 const photos = [
   // October 2026 batch, provided by the client.
+  { src: "/images/gallery/october2026/oct2026-04.jpg", alt: "Open kitchen with a long white stone island in progress" },
   { src: "/images/gallery/october2026/oct2026-01.jpg", alt: "Installer finishing a white marble-look slab shower wall with gray veining" },
   { src: "/images/gallery/october2026/oct2026-02.jpg", alt: "Bathroom clad floor to ceiling in white marble-look slabs" },
   { src: "/images/gallery/october2026/oct2026-03.jpg", alt: "Shower with full-height white marble-look slab walls and a recessed niche" },
-  { src: "/images/gallery/october2026/oct2026-04.jpg", alt: "Open kitchen with a long white stone island in progress" },
   { src: "/images/gallery/october2026/oct2026-05.jpg", alt: "White stone waterfall countertop being installed on a covered patio" },
   { src: "/images/gallery/october2026/oct2026-06.jpg", alt: "Outdoor kitchen with a gray stone island overlooking the water" },
   { src: "/images/gallery/october2026/oct2026-07.jpg", alt: "Shower bench and curb in white stone during installation" },
