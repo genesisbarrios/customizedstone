@@ -45,12 +45,25 @@ export default function ServicesPage() {
               {services.map((service) => (
                 <div
                   key={service.name}
-                  className="rounded-lg border border-base-300 bg-base-100 shadow-sm p-6"
+                  className="rounded-lg border border-base-300 bg-base-100 shadow-sm overflow-hidden"
                 >
-                  <h3 className="font-semibold text-lg">{service.name}</h3>
-                  <p className="text-sm text-base-content/60 mt-1">
-                    {service.description}
-                  </p>
+                  {service.image && (
+                    <div className="relative aspect-[4/3]">
+                      <Image
+                        src={service.image}
+                        alt={service.name}
+                        fill
+                        sizes="(min-width: 1024px) 368px, (min-width: 640px) 50vw, 100vw"
+                        className="object-cover"
+                      />
+                    </div>
+                  )}
+                  <div className="p-6">
+                    <h3 className="font-semibold text-lg">{service.name}</h3>
+                    <p className="text-sm text-base-content/60 mt-1">
+                      {service.description}
+                    </p>
+                  </div>
                 </div>
               ))}
             </div>
