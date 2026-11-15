@@ -12,6 +12,9 @@ export const metadata = getSEOTags({
 
 // Real project photos, newest first.
 const photos = [
+  // November 2026, provided by the client.
+  { src: "/images/gallery/tvstand.jpg", alt: "Bookmatched white and brown marble-look slab TV wall and bench during installation" },
+  { src: "/images/gallery/finished-tv-area.jpg", alt: "Bookmatched marble-look slab TV wall and floating bench framed by wood paneling" },
   // October 2026 batch, provided by the client.
   { src: "/images/gallery/october2026/oct2026-04.jpg", alt: "Open kitchen with a long white stone island in progress" },
   { src: "/images/gallery/october2026/oct2026-01.jpg", alt: "Installer finishing a white marble-look slab shower wall with gray veining" },
